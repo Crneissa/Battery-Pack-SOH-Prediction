@@ -20,7 +20,7 @@ import re
 # --------------------------------------------------------
 app = Flask(__name__)
 
-API_KEY = "AIzaSyC9ZOUoxihH0RKCRRLJmnaE4klu07v_E3A"  # <-- put your real key here
+API_KEY = "Enter your api key here"  # <-- put your real key here
 
 DATA_FILE = "PulseBat_Dataset.xlsx"
 SHEET_NAME = "SOC ALL"
