@@ -432,6 +432,13 @@
             text-align: center;
         }
         
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #145A40;
+        }
+        
         .loading {
             display: none;
             text-align: center;
@@ -560,6 +567,14 @@
                             value="0.6"
                         >
                         <span style="font-size: 0.85em; color: rgba(255, 255, 255, 0.5);">(60%)</span>
+                    </div>
+                    <div class="control-group">
+                        <label for="plotToggle">Show Plots:</label>
+                        <input 
+                            type="checkbox" 
+                            id="plotToggle" 
+                            checked
+                        >
                     </div>
                 </div>
             </div>
@@ -717,12 +732,19 @@
                     document.getElementById('userInput').placeholder = "Ask anything about batteries or technology...";
                 } else {
                     // Everything else goes to Gemini
+                    const threshold = document.getElementById('threshold').value;
+                    const showPlots = document.getElementById('plotToggle').checked;
+                    
                     const response = await fetch('/chat', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ message: message })
+                        body: JSON.stringify({ 
+                            message: message,
+                            threshold: threshold,
+                            plot: showPlots
+                        })
                     });
                     
                     const data = await response.json();
@@ -737,6 +759,7 @@
         
         async function sendPrediction(values) {
             const threshold = document.getElementById('threshold').value;
+            const showPlots = document.getElementById('plotToggle').checked;
             
             try {
                 const response = await fetch('/predict', {
@@ -746,7 +769,8 @@
                     },
                     body: JSON.stringify({ 
                         values: values,
-                        threshold: threshold
+                        threshold: threshold,
+                        plot: showPlots
                     })
                 });
                 
