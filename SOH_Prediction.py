@@ -20,7 +20,7 @@ import re
 # --------------------------------------------------------
 app = Flask(__name__)
 
-API_KEY = "Gemini_API-Key"  # <-- put your real key here
+API_KEY = "Enter your api key here"  # <-- put your real key here
 
 DATA_FILE = "PulseBat_Dataset.xlsx"
 SHEET_NAME = "SOC ALL"
@@ -70,6 +70,58 @@ DO NOT add explanations, comments, or extra text.
 Return ONLY the JSON.
 """
 
+# --------------------------------------------------------
+# DATA
+
+FAQ_KNOWLEDGE_BASE = {
+    "health_factors": {
+        "keywords": ["factor", "health", "affect", "destroy", "damage", "cause"], 
+        "required_match_count": 2, 
+        "answer": (
+            "Here are some **key factors that affect battery health**:\n\n"
+            "1. **Charge/Discharge Cycles** – Frequent fast charging or deep discharging (0–100%) accelerates wear.\n"
+            "2. **Depth of Discharge (DoD)** – Keeping the battery roughly between **20–80%** is gentler.\n"
+            "3. **Temperature** – Heat speeds up chemical ageing.\n"
+            "4. **Charging Rate** – Fast charging generates more heat and stress.\n"
+            "5. **Storage** – Store at moderate charge (40-60%) and cool temps.\n\n"
+            "Your **voltage profile (U1–U21)** helps us estimate the resulting **SOH**."
+        )
+    },
+    "extend_life": {
+        "keywords": ["extend", "improve", "increase", "life", "lifespan", "save", "longer"],
+        "required_match_count": 2,
+        "answer": (
+            "Practical ways to **extend your battery's life**:\n\n"
+            "1. **Avoid extremes** – Stay between **20–80%** daily.\n"
+            "2. **Limit heat** – Don't charge/store in hot environments.\n"
+            "3. **Slow Charge** – Use moderate power when you can.\n"
+            "4. **Avoid deep discharge** – Charge before you hit 0%.\n"
+            "5. **Storage** – Keep at **40–60%** if storing for long periods."
+        )
+    },
+    "what_is_soh": {
+        "keywords": ["soh", "state of health", "meaning", "definition", "define"],
+        "required_match_count": 1, 
+        "answer": (
+            "**State of Health (SOH)** describes **how much usable capacity a battery has left**:\n\n"
+            "- **SOH = 1.0 (100%)** → Like new.\n"
+            "- **SOH = 0.8 (80%)** → 80% capacity remaining.\n"
+            "- **< 0.6 (60%)** → Often considered end-of-life.\n\n"
+            "We use your **U1–U21 voltages** to predict this value."
+        )
+    },
+    "voltage_range": {
+        "keywords": ["voltage", "range", "optimal", "limit", "min", "max", "normal"],
+        "required_match_count": 2,
+        "answer": (
+            "Typical **per-cell voltage ranges** (Li-ion):\n\n"
+            "- **Fully charged**: ~4.1–4.2 V\n"
+            "- **Nominal**: ~3.6–3.7 V\n"
+            "- **Min limit**: ~3.0 V (going lower damages the cell)."
+        )
+    }
+}
+# --------------------------------------------------------
 
 # --------------------------------------------------------
 # MODEL LOADING & TRAINING
@@ -280,166 +332,25 @@ def process_soh_output(soh_raw, threshold):
 
 
 def answer_battery_faq(user_msg: str):
-    """
-    Simple keyword-based FAQ so the quick Chat with AI buttons behave well
-    without always relying on the LLM, and also work as a fallback if routing fails.
-    Returns a Markdown-formatted string, or None if no match.
-    """
-    msg = user_msg.lower()
+    if not user_msg:
+        return None
+    
+    msg = user_msg.lower().strip()
+    best_match = None
+    highest_score = 0
 
-    # 1. Battery health factors
-    if "factor" in msg and "battery" in msg and "health" in msg:
-        return (
-            "Here are some **key factors that affect battery health**:\n\n"
-            "1. **Charge/Discharge Cycles** – Each full cycle slightly ages the battery. "
-            "Frequent fast charging or deep discharging (0–100%) accelerates wear.\n"
-            "2. **Depth of Discharge (DoD)** – Keeping the battery roughly between **20–80%** "
-            "is usually gentler than repeatedly going 0–100%.\n"
-            "3. **Temperature** – High temperatures are especially harmful. "
-            "Charging or storing the battery while hot speeds up chemical ageing.\n"
-            "4. **Charging Rate** – Very high charging currents (fast charging all the time) "
-            "create more heat and stress the cell chemistry.\n"
-            "5. **Storage Conditions** – Long-term storage at 0% or 100% is not ideal; "
-            "moderate charge and cool temperatures are better.\n"
-            "6. **Cell Chemistry & Build Quality** – Different chemistries and pack designs "
-            "naturally have different lifespans.\n\n"
-            "In this app, your **voltage profile (U1–U21)** is used as a proxy to see how this "
-            "underlying ageing shows up as a change in **State of Health (SOH)**."
-        )
+    for topic, data in FAQ_KNOWLEDGE_BASE.items():
+        matches = 0
+        for keyword in data["keywords"]:
+            if keyword in msg:
+                matches +=1
+    
+    if matches >= data["required_match_count"]:
+        if matches > highest_score:
+            highest_score = matches
+            best_match = data["answer"]
 
-    # 2. Extend battery life
-    if ("extend" in msg or "improve" in msg or "increase" in msg) and ("life" in msg or "lifespan" in msg):
-        return (
-            "Practical ways to **extend your battery's life**:\n\n"
-            "1. **Avoid extremes of charge** – For daily use, staying roughly between **20–80%** "
-            "is gentler than constantly going 0–100%.\n"
-            "2. **Limit heat** – Try not to charge or store the battery when it is very hot "
-            "(e.g., in a parked car in summer).\n"
-            "3. **Use moderate charging power when possible** – Fast charging is fine occasionally, "
-            "but slower charging generates less heat and stress.\n"
-            "4. **Avoid frequent deep discharges** – Plug in once you're around 15–20% instead of "
-            "regularly hitting 0%.\n"
-            "5. **Store smart** – For long-term storage, keep the battery around **40–60%** state of charge "
-            "and in a cool, dry place.\n"
-            "6. **Keep the management system updated** – Firmware and BMS updates may improve charging "
-            "strategies and protection limits.\n\n"
-            "All of these help keep the **SOH** closer to 1.0 over a longer period."
-        )
-
-    # 3. What is SOH?
-    if "state of health" in msg or "what is soh" in msg or "soh?" in msg or " soh" in msg:
-        return (
-            "**State of Health (SOH)** describes **how much usable capacity or performance a battery "
-            "still has relative to when it was new**.\n\n"
-            "- **SOH = 1.0 (100%)** → behaves like a new battery.\n"
-            "- **SOH = 0.8 (80%)** → can store/deliver about 80% of original capacity.\n"
-            "- Values below a chosen threshold (e.g., 0.6 or 60%) often indicate end-of-life.\n\n"
-            "In this app, your measured **U1–U21 voltages** are fed into a regression model that predicts SOH. "
-            "The result is then classified as **Healthy** or **Unhealthy** based on the configurable threshold."
-        )
-
-    # 4. Voltage ranges
-    if "voltage" in msg and ("range" in msg or "ranges" in msg or "optimal" in msg):
-        return (
-            "Typical **per-cell voltage ranges** for many lithium-ion chemistries are:\n\n"
-            "- **Fully charged**: about **4.1–4.2 V** per cell (chemistry dependent).\n"
-            "- **Nominal**: about **3.6–3.7 V** per cell.\n"
-            "- **Recommended lower limit**: often around **3.0 V** per cell; going much lower "
-            "can damage the cell.\n\n"
-            "For packs, the total voltage is simply **number_of_series_cells × cell_voltage**.\n\n"
-            "Your U1–U21 inputs effectively sample how the pack's voltage behaves under a defined condition. "
-            "The model uses that pattern to infer an overall **State of Health (SOH)**."
-        )
-
-    return None
-
-
-def answer_battery_faq_exact(user_msg: str):
-    """
-    Hard-coded answers for the four quick-chat buttons.
-    If the message matches one of the known questions (or close variants),
-    return a Markdown answer string. Otherwise return None.
-    """
-    msg = user_msg.strip()
-
-    # These are the exact strings your buttons send from index.html:
-    q1 = "What factors affect battery health?"
-    q2 = "How can I extend battery lifespan?"
-    q3 = "What is State of Health in batteries?"
-    q4 = "What are optimal voltage ranges?"
-
-    # You can also allow a few shorter manual variants if you like:
-    msg_lower = msg.lower()
-
-    # 1) Battery Health Factors
-    if msg == q1 or ("factor" in msg_lower and "battery" in msg_lower and "health" in msg_lower):
-        return (
-            "Here are some **key factors that affect battery health**:\n\n"
-            "1. **Charge/Discharge Cycles** – Every full cycle slightly ages the battery. "
-            "Frequent fast charging or deep 0–100% swings accelerate wear.\n"
-            "2. **Depth of Discharge (DoD)** – Keeping the battery around **20–80%** is gentler "
-            "than repeatedly going all the way to 0% or 100%.\n"
-            "3. **Temperature** – High temperatures are especially harmful. "
-            "Charging or storing the battery when it's hot speeds up chemical ageing.\n"
-            "4. **Charging Rate** – Very high charging currents (fast charging all the time) "
-            "generate more heat and stress the cell chemistry.\n"
-            "5. **Storage Conditions** – Long-term storage at 0% or 100% is not ideal; "
-            "a moderate charge and cool temperature are better.\n"
-            "6. **Cell Chemistry & Build Quality** – Different chemistries and pack designs "
-            "naturally have different lifespans.\n\n"
-            "In this app, your **voltage profile (U1–U21)** is used to estimate how this underlying "
-            "ageing shows up as a change in **State of Health (SOH)**."
-        )
-
-    # 2) Extend Battery Life
-    if msg == q2 or (("extend" in msg_lower or "increase" in msg_lower or "improve" in msg_lower)
-                     and "life" in msg_lower):
-        return (
-            "Practical ways to **extend your battery's life**:\n\n"
-            "1. **Avoid extremes of charge** – For daily use, staying roughly in the **20–80%** range "
-            "is gentler than constantly going 0–100%.\n"
-            "2. **Limit heat** – Try not to charge or store the battery when it is very hot "
-            "(e.g., in a parked car in summer).\n"
-            "3. **Use moderate charging power** – Fast charging is fine occasionally, but slower charging "
-            "creates less heat and stress.\n"
-            "4. **Avoid frequent deep discharges** – Plug in once you're around 15–20% instead of "
-            "regularly hitting 0%.\n"
-            "5. **Store smart** – For long-term storage, keep the battery around **40–60%** state of charge "
-            "and in a cool, dry place.\n"
-            "6. **Keep firmware/BMS updated** – Updates may improve charging strategies and protection.\n\n"
-            "These habits help keep the **SOH** closer to 1.0 over a longer period."
-        )
-
-    # 3) What is SOH?
-    if (msg == q3 or
-        "what is soh" in msg_lower or
-        "state of health" in msg_lower):
-        return (
-            "**State of Health (SOH)** describes **how much usable capacity or performance a battery "
-            "still has compared to when it was new**.\n\n"
-            "- **SOH = 1.0 (100%)** → behaves like a new battery.\n"
-            "- **SOH = 0.8 (80%)** → can store/deliver about 80% of the original capacity.\n"
-            "- Values below a chosen threshold (e.g., 0.6 or 60%) often indicate end-of-life.\n\n"
-            "In this app, your measured **U1–U21 voltages** are fed into a regression model that predicts SOH, "
-            "and then the result is classified as **Healthy** or **Unhealthy** based on the threshold you set."
-        )
-
-    # 4) Voltage ranges
-    if msg == q4 or ("voltage" in msg_lower and "range" in msg_lower):
-        return (
-            "Typical **per-cell voltage ranges** for many lithium-ion cells are:\n\n"
-            "- **Fully charged**: about **4.1–4.2 V** per cell (chemistry dependent).\n"
-            "- **Nominal**: about **3.6–3.7 V** per cell.\n"
-            "- **Recommended lower limit**: often around **3.0 V** per cell; going much lower "
-            "can damage the cell.\n\n"
-            "For packs, the total voltage is **number_of_series_cells × cell_voltage**.\n\n"
-            "Your U1–U21 measurements effectively sample how the pack's voltage behaves under a specific "
-            "condition, and the model uses that pattern to infer overall **SOH**."
-        )
-
-    # Anything else: not one of the hard-coded questions
-    return None
-
+    return best_match
 # --------------------------------------------------------
 # ROUTES
 # --------------------------------------------------------
@@ -544,7 +455,7 @@ def chat():
         })
 
     # 1️⃣ NO 21-VALUE INPUT → first check if it's one of the hard-coded FAQ questions
-    faq_answer = answer_battery_faq_exact(user_msg)
+    faq_answer = answer_battery_faq(user_msg)
     if faq_answer is not None:
         return jsonify({
             "response": faq_answer,
