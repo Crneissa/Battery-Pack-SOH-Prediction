@@ -4,6 +4,12 @@ import numpy as np
 import google.generativeai as genai
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
+from flask import Flask, render_template, request, jsonify
+import pandas as pd
+import numpy as np
+import google.generativeai as genai
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 import matplotlib
@@ -16,11 +22,113 @@ import json
 import re
 
 # --------------------------------------------------------
-# CONFIGURATION
+# CONFIGURATION 
 # --------------------------------------------------------
 app = Flask(__name__)
 
-API_KEY = "Gemini_API-Key"  # <-- put your real key here
+API_KEY = "YOUR_API_KEY"  # <-- put your real key here
+
+DATA_FILE = "PulseBat_Dataset.xlsx"
+SHEET_NAME = "SOC ALL"
+FEATURE_COLS = [f"U{i}" for i in range(1, 22)]
+
+THRESHOLD_DEFAULT = 0.6
+MIN_VOLTAGE = 0.0
+MAX_VOLTAGE = 5.0
+
+# Gemini Setup
+genai.configure(api_key=API_KEY)
+gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+
+# --------------------------------------------------------
+# GEMINI ROUTER PROMPT
+# --------------------------------------------------------
+
+ROUTER_SYSTEM_PROMPT = """
+You are a router for a battery health prediction system.
+
+Your job is to decide whether the user's message is:
+1. A general chat message (normal conversational question)
+2. A battery State of Health (SOH) prediction request.
+
+Your output MUST ALWAYS be valid JSON only.
+
+Rules:
+
+IF the user is asking for SOH prediction, battery health, battery condition, voltage evaluation, or provides numbers:
+    - Set "route" to "PREDICT".
+    - Extract exactly 21 voltage values in numeric form and place them in "values".
+    - Values may appear comma-separated, space-separated, mixed, or messy.
+    - If fewer than 21 numeric values are detected, put "values": null.
+
+IF the user is NOT asking for prediction:
+    - Set "route" to "CHAT".
+    - Provide a natural conversational response in "response".
+
+JSON format:
+{
+  "route": "CHAT" or "PREDICT",
+  "values": [list of 21 voltages OR null],
+  "response": "chat response ONLY if route=CHAT"
+}
+
+DO NOT add explanations, comments, or extra text.
+Return ONLY the JSON.
+"""
+
+
+# --------------------------------------------------------
+# MODEL LOADING & TRAINING
+# --------------------------------------------------------
+
+def load_and_train_model():
+    """Load dataset, train regression, and compute performance metrics."""
+    df = pd.read_excel(DATA_FILE, sheet_name=SHEET_NAME)
+
+    # Clean column names
+    df.columns = (
+        df.columns.str.strip()
+        .str.replace(r"\(.*\)", "", regex=True)
+        .str.replace(r"[_\.\s]+", "", regex=True)
+        .str.upper()
+    )
+
+    X = df[FEATURE_COLS]
+    y = df["SOH"]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+
+    y_pred = model.predict(X_test)
+ 
+ 
+from flask import Flask, render_template, request, jsonify
+import pandas as pd
+import numpy as np
+import google.generativeai as genai
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+
+import matplotlib
+matplotlib.use("Agg")  # for servers / no GUI
+import matplotlib.pyplot as plt
+
+import base64
+from io import BytesIO
+import json
+import re
+
+# --------------------------------------------------------
+# CONFIGURATION 
+# --------------------------------------------------------
+app = Flask(__name__)
+
+API_KEY = "GEMINI_API_KEY"  # <-- put your real key here
 
 DATA_FILE = "PulseBat_Dataset.xlsx"
 SHEET_NAME = "SOC ALL"
@@ -310,14 +418,14 @@ def answer_battery_faq(user_msg: str):
     # 2. Extend battery life
     if ("extend" in msg or "improve" in msg or "increase" in msg) and ("life" in msg or "lifespan" in msg):
         return (
-            "Practical ways to **extend your battery's life**:\n\n"
+            "Practical ways to **extend your battery’s life**:\n\n"
             "1. **Avoid extremes of charge** – For daily use, staying roughly between **20–80%** "
             "is gentler than constantly going 0–100%.\n"
             "2. **Limit heat** – Try not to charge or store the battery when it is very hot "
             "(e.g., in a parked car in summer).\n"
             "3. **Use moderate charging power when possible** – Fast charging is fine occasionally, "
             "but slower charging generates less heat and stress.\n"
-            "4. **Avoid frequent deep discharges** – Plug in once you're around 15–20% instead of "
+            "4. **Avoid frequent deep discharges** – Plug in once you’re around 15–20% instead of "
             "regularly hitting 0%.\n"
             "5. **Store smart** – For long-term storage, keep the battery around **40–60%** state of charge "
             "and in a cool, dry place.\n"
@@ -347,7 +455,7 @@ def answer_battery_faq(user_msg: str):
             "- **Recommended lower limit**: often around **3.0 V** per cell; going much lower "
             "can damage the cell.\n\n"
             "For packs, the total voltage is simply **number_of_series_cells × cell_voltage**.\n\n"
-            "Your U1–U21 inputs effectively sample how the pack's voltage behaves under a defined condition. "
+            "Your U1–U21 inputs effectively sample how the pack’s voltage behaves under a defined condition. "
             "The model uses that pattern to infer an overall **State of Health (SOH)**."
         )
 
@@ -380,7 +488,7 @@ def answer_battery_faq_exact(user_msg: str):
             "2. **Depth of Discharge (DoD)** – Keeping the battery around **20–80%** is gentler "
             "than repeatedly going all the way to 0% or 100%.\n"
             "3. **Temperature** – High temperatures are especially harmful. "
-            "Charging or storing the battery when it's hot speeds up chemical ageing.\n"
+            "Charging or storing the battery when it’s hot speeds up chemical ageing.\n"
             "4. **Charging Rate** – Very high charging currents (fast charging all the time) "
             "generate more heat and stress the cell chemistry.\n"
             "5. **Storage Conditions** – Long-term storage at 0% or 100% is not ideal; "
@@ -395,14 +503,14 @@ def answer_battery_faq_exact(user_msg: str):
     if msg == q2 or (("extend" in msg_lower or "increase" in msg_lower or "improve" in msg_lower)
                      and "life" in msg_lower):
         return (
-            "Practical ways to **extend your battery's life**:\n\n"
+            "Practical ways to **extend your battery’s life**:\n\n"
             "1. **Avoid extremes of charge** – For daily use, staying roughly in the **20–80%** range "
             "is gentler than constantly going 0–100%.\n"
             "2. **Limit heat** – Try not to charge or store the battery when it is very hot "
             "(e.g., in a parked car in summer).\n"
             "3. **Use moderate charging power** – Fast charging is fine occasionally, but slower charging "
             "creates less heat and stress.\n"
-            "4. **Avoid frequent deep discharges** – Plug in once you're around 15–20% instead of "
+            "4. **Avoid frequent deep discharges** – Plug in once you’re around 15–20% instead of "
             "regularly hitting 0%.\n"
             "5. **Store smart** – For long-term storage, keep the battery around **40–60%** state of charge "
             "and in a cool, dry place.\n"
@@ -433,7 +541,7 @@ def answer_battery_faq_exact(user_msg: str):
             "- **Recommended lower limit**: often around **3.0 V** per cell; going much lower "
             "can damage the cell.\n\n"
             "For packs, the total voltage is **number_of_series_cells × cell_voltage**.\n\n"
-            "Your U1–U21 measurements effectively sample how the pack's voltage behaves under a specific "
+            "Your U1–U21 measurements effectively sample how the pack’s voltage behaves under a specific "
             "condition, and the model uses that pattern to infer overall **SOH**."
         )
 
@@ -447,6 +555,7 @@ def answer_battery_faq_exact(user_msg: str):
 @app.route("/")
 def home():
     return render_template("index.html")
+
 
 
 @app.route("/chat", methods=["POST"])
@@ -493,56 +602,58 @@ def chat():
                 "response": "\n".join(msg_lines),
                 "type": "prediction_request"
             })
-
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         # Prediction & SOH processing
         soh_raw = run_prediction(values, threshold)
         soh_clamped, health, warning = process_soh_output(soh_raw, threshold)
 
-        soh_plot_img = generate_soh_bar_plot(values, soh_clamped) if want_plot else None
+        # Only generate plots if requested
         performance_img = generate_performance_plot(current_soh=soh_clamped) if want_plot else None
-        domain_img = generate_input_domain_plot(values, soh_clamped) if want_plot else None
         input_preview = ", ".join(f"{v:.3f}" for v in values[:6])
 
         result = f"""
-**Prediction Result**
+        **Prediction Result**
 
-**Predicted SOH (raw):** {soh_raw:.4f}  
-**Predicted SOH (clamped):** {soh_clamped:.4f} ({soh_clamped*100:.2f}%)
-**Classification:** **{health}**
-**Threshold Used:** {threshold:.4f} ({threshold*100:.1f}%)
+        **Predicted SOH:** {soh_clamped:.4f} ({soh_clamped*100:.2f}%)
+        **Classification:** **{health}**
+        **Threshold Used:** {threshold:.4f} ({threshold*100:.1f}%)
 
-{f"**{warning}**" if warning else ""}
+        {f"**{warning}**" if warning else ""}
 
-**Model Performance (Original Sorting):**
-- **Test R²:** {TEST_R2:.4f}
-- **Test MSE:** {TEST_MSE:.4f}
-- **Test MAE:** {TEST_MAE:.4f}
+        **Model Performance (Original Sorting):**
+        - **Test R²:** {TEST_R2:.4f}
+        - **Test MSE:** {TEST_MSE:.4f}
+        - **Test MAE:** {TEST_MAE:.4f}
 
-**Input Voltages (first 6):** {input_preview}
+        **Input Voltages (first 6):** {input_preview}
 
-**Regression Equation:**  
-{regression_equation}
-"""
+        **Regression Equation:**  
+        {regression_equation}
+        """
 
-        # Only add plots if they were generated
-        if want_plot and performance_img:
+        if want_plot and performance_img is not None:
             result += f"""
-<br><br><strong>SOH Prediction Performance</strong><br>
-<img src="data:image/png;base64,{performance_img}" alt="SOH Prediction Performance Scatter" />
-"""
 
-        if want_plot and domain_img:
-            result += f"""
-<br><br><strong>Your Input vs Training Domain</strong><br>
-<img src="data:image/png;base64,{domain_img}" alt="Input Domain Scatter" />
-"""
+        <br><br><strong>SOH Prediction Performance</strong><br>
+        <img src="data:image/png;base64,{performance_img}" alt="SOH Prediction Performance Scatter" />
+        """
 
         return jsonify({
             "response": result,
-            "type": "prediction_result",
-            "plot": soh_plot_img
+            "type": "prediction_result"
         })
-
+        
+        
+        
     # 1️⃣ NO 21-VALUE INPUT → first check if it's one of the hard-coded FAQ questions
     faq_answer = answer_battery_faq_exact(user_msg)
     if faq_answer is not None:
@@ -591,7 +702,7 @@ def predict():
     data = request.json or {}
     raw_values = data.get("values", "")
     threshold = float(data.get("threshold", THRESHOLD_DEFAULT))
-    want_plot = data.get("plot", False)  # Get plot preference from request
+    plot_flag = bool(data.get("plot", False))
 
     # Accept either string "3.56 3.57 ..." or list [3.56, 3.57, ...]
     if isinstance(raw_values, str):
@@ -645,7 +756,7 @@ def predict():
             "type": "prediction_request"
         })
 
-    # 2️⃣ Range / sanity checks
+    # 2️⃣ Range / sanity checks – THIS is what you want to trigger
     issues = detect_and_suggest_fixes(values, MIN_VOLTAGE, MAX_VOLTAGE)
     if issues:
         msg_lines = ["**Invalid or unusual voltage values detected:**", ""]
@@ -668,56 +779,58 @@ def predict():
             "response": "\n".join(msg_lines),
             "type": "prediction_request"
         })
-
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     # 3️⃣ Safe to run prediction
     soh_raw = run_prediction(values, threshold)
     soh_clamped, health, warning = process_soh_output(soh_raw, threshold)
 
-    # Plots (only generate if requested)
-    soh_plot_img = generate_soh_bar_plot(values, soh_clamped) if want_plot else None
-    performance_img = generate_performance_plot(current_soh=soh_clamped) if want_plot else None
-    domain_img = generate_input_domain_plot(values, soh_clamped) if want_plot else None
+    # Only generate plots if requested
+    performance_img = generate_performance_plot(current_soh=soh_clamped) if plot_flag else None
     input_preview = ", ".join(f"{v:.3f}" for v in values[:6])
 
     result = f"""
-**Prediction Result**
+    **Prediction Result**
 
-**Predicted SOH (raw):** {soh_raw:.4f}  
-**Predicted SOH (clamped):** {soh_clamped:.4f} ({soh_clamped*100:.2f}%)
-**Classification:** **{health}**
-**Threshold Used:** {threshold:.4f} ({threshold*100:.1f}%)
+    **Predicted SOH:** {soh_clamped:.4f} ({soh_clamped*100:.2f}%)
+    **Classification:** **{health}**
+    **Threshold Used:** {threshold:.4f} ({threshold*100:.1f}%)
 
-{f"**{warning}**" if warning else ""}
+    {f"**{warning}**" if warning else ""}
 
-**Model Performance (Original Sorting):**
-- **Test R²:** {TEST_R2:.4f}
-- **Test MSE:** {TEST_MSE:.4f}
-- **Test MAE:** {TEST_MAE:.4f}
+    **Model Performance (Original Sorting):**
+    - **Test R²:** {TEST_R2:.4f}
+    - **Test MSE:** {TEST_MSE:.4f}
+    - **Test MAE:** {TEST_MAE:.4f}
 
-**Input Voltages (first 6):** {input_preview}
+    **Input Voltages (first 6):** {input_preview}
 
-**Regression Equation:**  
-{regression_equation}
-"""
+    **Regression Equation:**  
+    {regression_equation}
+    """
 
-    # Only add plots to result if they were generated
-    if want_plot and performance_img:
+    if plot_flag and performance_img is not None:
         result += f"""
-<br><br><strong>SOH Prediction Performance</strong><br>
-<img src="data:image/png;base64,{performance_img}" alt="SOH Prediction Performance Scatter" />
-"""
 
-    if want_plot and domain_img:
-        result += f"""
-<br><br><strong>Your Input vs Training Domain</strong><br>
-<img src="data:image/png;base64,{domain_img}" alt="Input Domain Scatter" />
-"""
+    <br><br><strong>SOH Prediction Performance</strong><br>
+    <img src="data:image/png;base64,{performance_img}" alt="SOH Prediction Performance Scatter" />
+    """
 
     return jsonify({
         "response": result,
-        "type": "prediction_result",
-        "plot": soh_plot_img
+        "type": "prediction_result"
     })
+
+
+    
 
 
 # --------------------------------------------------------
@@ -726,3 +839,4 @@ def predict():
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+SOH_Prediction.py
